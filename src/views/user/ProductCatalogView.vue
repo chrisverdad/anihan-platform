@@ -396,6 +396,7 @@ import { useToast } from 'vue-toastification'
 import { useAuthStore } from '@/stores/auth'
 import { useProductsStore } from '@/stores/products'
 import { useWasteStore } from '@/stores/waste'
+import { socket } from '@/socket' // make sure src/socket.ts exists
 import {
   MagnifyingGlassIcon,
   Squares2X2Icon,
@@ -444,9 +445,7 @@ const filteredProducts = computed(() => {
   return filtered
 })
 
-const featuredProducts = computed(() => {
-  return filteredProducts.value.slice(0, 3)
-})
+const featuredProducts = computed(() => filteredProducts.value.slice(0, 3))
 
 const paginatedProducts = computed(() => {
   const start = (currentPage.value - 1) * itemsPerPage.value
@@ -454,9 +453,7 @@ const paginatedProducts = computed(() => {
   return filteredProducts.value.slice(start, end)
 })
 
-const totalPages = computed(() => {
-  return Math.ceil(filteredProducts.value.length / itemsPerPage.value)
-})
+const totalPages = computed(() => Math.ceil(filteredProducts.value.length / itemsPerPage.value))
 
 // Methods
 const loadProducts = async () => {
@@ -468,7 +465,7 @@ const loadProducts = async () => {
     products.value = productsStore.products
   } catch (error) {
     console.error('Failed to load products:', error)
-    // Fallback to mock data if needed
+    // Fallback mock data if needed
     products.value = [
       {
         id: '1',
@@ -508,45 +505,6 @@ const loadProducts = async () => {
         is_available: true,
         created_at: '2024-03-05T00:00:00Z',
         updated_at: '2024-03-05T00:00:00Z'
-      },
-      {
-        id: '4',
-        name: 'Vegetable Compost',
-        description: 'Mixed vegetable compost from various damaged produce',
-        price: 120,
-        category: 'compost',
-        image_url: '/images/vegetable-compost.jpg',
-        stock_quantity: 20,
-        unit: 'kg',
-        is_available: true,
-        created_at: '2024-04-01T00:00:00Z',
-        updated_at: '2024-04-01T00:00:00Z'
-      },
-      {
-        id: '5',
-        name: 'Fruit Fertilizer',
-        description: 'Nutrient-rich fertilizer made from fruit waste',
-        price: 180,
-        category: 'fertilizer',
-        image_url: '/images/fruit-fertilizer.jpg',
-        stock_quantity: 12,
-        unit: 'bags',
-        is_available: true,
-        created_at: '2024-05-15T00:00:00Z',
-        updated_at: '2024-05-15T00:00:00Z'
-      },
-      {
-        id: '6',
-        name: 'Apple Preserves',
-        description: 'Sweet preserves made from bruised apples',
-        price: 90,
-        category: 'preserved_food',
-        image_url: '/images/apple-preserves.jpg',
-        stock_quantity: 0,
-        unit: 'jars',
-        is_available: false,
-        created_at: '2024-06-01T00:00:00Z',
-        updated_at: '2024-06-01T00:00:00Z'
       }
     ]
   }
@@ -560,20 +518,14 @@ const viewProduct = (product: Product) => {
 const placeOrder = async () => {
   try {
     if (!selectedProduct.value) return
-    
-    // Check if user is authenticated
+
     if (!authStore.isAuthenticated) {
       toast.error('Please log in to place an order')
       return
     }
-    
-    // Debug: Check if user is authenticated
-    console.log('Current user:', authStore.user)
-    console.log('User ID:', authStore.user?.id)
-    
-    // Create order data
+
     const orderData = {
-      user_id: authStore.user?.id || '3', // Use current user ID or fallback
+      user_id: authStore.user?.id || '3',
       product_id: selectedProduct.value.id,
       quantity: orderQuantity.value,
       total_price: selectedProduct.value.price * orderQuantity.value,
@@ -585,14 +537,9 @@ const placeOrder = async () => {
       delivery_notes: deliveryNotes.value,
       notes: deliveryNotes.value
     }
-    
-    console.log('Order data:', orderData)
-    
-    // Place order using products store
+
     const newOrder = await productsStore.placeOrder(orderData)
-    
-    console.log('Order created:', newOrder)
-    
+
     toast.success(`Order placed successfully! ${orderQuantity.value} ${selectedProduct.value.unit} of ${selectedProduct.value.name}`)
     selectedProduct.value = null
     resetOrderForm()
@@ -618,12 +565,32 @@ const resetImageErrors = () => {
   imageErrors.value = {}
 }
 
-// Watch for changes in products to reset image errors
-watch(products, () => {
-  resetImageErrors()
-}, { deep: true })
+// Watch for product changes to reset image errors
+watch(products, () => resetImageErrors(), { deep: true })
+
+// Socket listeners for real-time updates
+const setupSocketListeners = () => {
+  socket.on('product:created', (newProduct: Product) => {
+    products.value.unshift(newProduct)
+    toast.success(`New product added: ${newProduct.name}`)
+  })
+
+  socket.on('product:updated', (updatedProduct: Product) => {
+    const index = products.value.findIndex(p => p.id === updatedProduct.id)
+    if (index !== -1) {
+      products.value[index] = updatedProduct
+      toast.info(`Product updated: ${updatedProduct.name}`)
+    }
+  })
+
+  socket.on('product:deleted', (deletedId: string) => {
+    products.value = products.value.filter(p => p.id !== deletedId)
+    toast.info('A product was deleted.')
+  })
+}
 
 onMounted(() => {
   loadProducts()
+  setupSocketListeners()
 })
 </script>

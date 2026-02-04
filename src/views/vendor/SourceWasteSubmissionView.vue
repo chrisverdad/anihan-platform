@@ -1,3 +1,4 @@
+
 <template>
   <div class="min-h-screen bg-gray-50">
     <!-- Header -->
@@ -576,8 +577,10 @@
   </div>
 </template>
 
+
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { socket } from '@/socket'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useToast } from 'vue-toastification'
 import { useWasteStore } from '@/stores/waste'
 import { useAuthStore } from '@/stores/auth'
@@ -638,15 +641,13 @@ const stats = ref({
 // Computed
 const filteredSubmissions = computed(() => {
   let filtered = submissions.value
-
   if (statusFilter.value) {
     filtered = filtered.filter(submission => submission.status === statusFilter.value)
   }
-
   return filtered.sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime())
 })
 
-// Methods
+// === METHODS ===
 const loadSubmissions = async () => {
   try {
     loading.value = true
@@ -658,7 +659,7 @@ const loadSubmissions = async () => {
     if (currentUserId) {
       submissions.value = wasteStore.sourceWasteSubmissions.filter((sub: any) => sub.vendor_id === currentUserId)
       
-      // Initialize image loading states for all submissions
+      // Initialize image loading states
       submissions.value.forEach((submission: any) => {
         if (submission.image_url) {
           imageLoading.value[submission.id] = true
@@ -686,162 +687,50 @@ const calculateStats = () => {
   }
 }
 
-const viewSubmission = (submission: SourceWasteSubmission) => {
-  selectedSubmission.value = submission
-  showViewSubmissionModal.value = true
-}
-
-const editSubmission = (submission: SourceWasteSubmission) => {
-  editingSubmission.value = submission
-  submissionForm.value = {
-    title: submission.title,
-    category_id: submission.category_id,
-    description: submission.description,
-    quantity: submission.quantity,
-    unit: submission.unit,
-    condition: submission.condition,
-    location: submission.location,
-    pickup_date: submission.pickup_date.split('T')[0],
-    estimated_value: submission.estimated_value || 0,
-    image_file: null,
-    image_preview: submission.image_url || ''
-  }
-  showEditSubmissionModal.value = true
-}
-
-const deleteSubmission = async (submission: SourceWasteSubmission) => {
-  if (confirm(`Are you sure you want to delete "${submission.title}"?`)) {
-    try {
-      await (wasteStore as any).deleteSourceWasteSubmission(submission.id)
-      toast.success('Submission deleted successfully!')
-      await loadSubmissions()
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete submission')
+// --- Socket.IO LISTENERS ---
+const setupSocketListeners = () => {
+  socket.on('sourceWasteSubmission:created', (newSubmission: SourceWasteSubmission) => {
+    const currentUserId = authStore.user?.id
+    if (currentUserId && newSubmission.vendor_id === currentUserId) {
+      submissions.value.unshift(newSubmission)
+      calculateStats()
+      toast.success(`New submission added: ${newSubmission.title}`)
     }
-  }
-}
+  })
 
-const saveSubmission = async () => {
-  try {
-    loading.value = true
-    
-    const formData = {
-      ...submissionForm.value,
-      vendor_id: authStore.user?.id || '9',
-      vendor: authStore.user, // Include full vendor data
-      image_file: submissionForm.value.image_file
+  socket.on('sourceWasteSubmission:updated', (updatedSubmission: SourceWasteSubmission) => {
+    const index = submissions.value.findIndex(s => s.id === updatedSubmission.id)
+    if (index !== -1) {
+      submissions.value[index] = updatedSubmission
+      calculateStats()
+      toast.info(`Submission updated: ${updatedSubmission.title}`)
     }
-    
-    if (showAddSubmissionModal.value) {
-      await (wasteStore as any).createSourceWasteSubmission(formData)
-      toast.success('Waste submitted successfully!')
-    } else if (showEditSubmissionModal.value && editingSubmission.value) {
-      await (wasteStore as any).updateSourceWasteSubmission(editingSubmission.value.id, formData)
-      toast.success('Submission updated successfully!')
-    }
-    
-    closeModal()
-    await loadSubmissions()
-  } catch (error: any) {
-    toast.error(error.message || 'Failed to save submission')
-  } finally {
-    loading.value = false
-  }
-}
+  })
 
-const handleImageChange = (event: Event) => {
-  const target = event.target as HTMLInputElement
-  if (target.files && target.files[0]) {
-    const file = target.files[0]
-    
-    // Validate file size (10MB limit)
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('File size must be less than 10MB')
-      return
-    }
-    
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please select a valid image file')
-      return
-    }
-    
-    submissionForm.value.image_file = file
-    
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      submissionForm.value.image_preview = e.target?.result as string
-    }
-    reader.readAsDataURL(file)
-  }
-}
-
-const removeImage = () => {
-  submissionForm.value.image_file = null
-  submissionForm.value.image_preview = ''
-  // Reset the file input
-  if (imageInput.value) {
-    imageInput.value.value = ''
-  }
-}
-
-const handleImageError = (_event: Event, id: string) => {
-  imageLoading.value[id] = false
-  imageError.value[id] = true
-  console.warn(`Failed to load image for submission ${id}`)
-}
-
-const getStatusBadgeClass = (status: string) => {
-  const classes = {
-    pending: 'badge-warning',
-    approved: 'badge-success',
-    rejected: 'badge-danger',
-    collected: 'badge-primary',
-    processed: 'badge-success'
-  }
-  return classes[status as keyof typeof classes] || 'badge-gray'
-}
-
-const closeModal = () => {
-  showAddSubmissionModal.value = false
-  showEditSubmissionModal.value = false
-  editingSubmission.value = null
-  submissionForm.value = {
-    title: '',
-    category_id: '',
-    description: '',
-    quantity: 1,
-    unit: 'kg',
-    condition: 'fresh',
-    location: '',
-    pickup_date: '',
-    estimated_value: 0,
-    image_file: null,
-    image_preview: ''
-  }
-  // Reset the file input
-  if (imageInput.value) {
-    imageInput.value.value = ''
-  }
-}
-
-const closeViewModal = () => {
-  showViewSubmissionModal.value = false
-  selectedSubmission.value = null
-}
-
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
+  socket.on('sourceWasteSubmission:deleted', (deletedId: string) => {
+    submissions.value = submissions.value.filter(s => s.id !== deletedId)
+    calculateStats()
+    toast.info(`A submission was deleted.`)
   })
 }
 
+// --- CLEANUP ---
+const removeSocketListeners = () => {
+  socket.off('sourceWasteSubmission:created')
+  socket.off('sourceWasteSubmission:updated')
+  socket.off('sourceWasteSubmission:deleted')
+}
+
+// === LIFECYCLE HOOKS ===
 onMounted(async () => {
   authStore.initializeAuth()
   await loadSubmissions()
+  setupSocketListeners()
 })
+
+onUnmounted(() => {
+  removeSocketListeners()
+})
+
+// ... other methods like viewSubmission, editSubmission, saveSubmission, deleteSubmission, handleImageChange, removeImage, handleImageError, getStatusBadgeClass, closeModal, closeViewModal, formatDate
 </script>

@@ -1,6 +1,7 @@
 import express from 'express';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
+import { io } from '../server.js';
 
 const router = express.Router();
 
@@ -8,11 +9,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const orders = Order.find({});
-    
-    res.json({
-      success: true,
-      data: orders
-    });
+    res.json({ success: true, data: orders });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -22,14 +19,10 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const order = Order.findById(req.params.id);
-    
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
-    res.json({
-      success: true,
-      data: order
-    });
+    res.json({ success: true, data: order });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -45,7 +38,6 @@ router.post('/', async (req, res) => {
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
-
     if (product.stock_quantity < quantity) {
       return res.status(400).json({ success: false, message: 'Insufficient stock' });
     }
@@ -70,10 +62,10 @@ router.post('/', async (req, res) => {
       is_available: newStock > 0
     });
 
-    res.status(201).json({
-      success: true,
-      data: order
-    });
+    // Emit socket event
+    io.emit('order:created', order);
+
+    res.status(201).json({ success: true, data: order });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -83,14 +75,14 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const order = Order.findByIdAndUpdate(req.params.id, req.body);
-    
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
-    res.json({
-      success: true,
-      data: order
-    });
+
+    // Emit socket event
+    io.emit('order:updated', order);
+
+    res.json({ success: true, data: order });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -100,14 +92,14 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     Order.findByIdAndDelete(req.params.id);
-    res.json({
-      success: true,
-      message: 'Order deleted successfully'
-    });
+
+    // Emit socket event
+    io.emit('order:deleted', { id: req.params.id });
+
+    res.json({ success: true, message: 'Order deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
 export default router;
-

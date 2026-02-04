@@ -2,6 +2,7 @@ import express from 'express';
 import Product from '../models/Product.js';
 import upload from '../utils/fileUpload.js';
 import { getFileUrl, deleteFile } from '../utils/fileUpload.js';
+import { io } from '../server.js';
 
 const router = express.Router();
 
@@ -9,10 +10,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const products = Product.find({});
-    res.json({
-      success: true,
-      data: products
-    });
+    res.json({ success: true, data: products });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -25,10 +23,7 @@ router.get('/:id', async (req, res) => {
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
-    res.json({
-      success: true,
-      data: product
-    });
+    res.json({ success: true, data: product });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -37,7 +32,6 @@ router.get('/:id', async (req, res) => {
 // Create product
 router.post('/', upload.single('image'), async (req, res) => {
   try {
-    // Handle image upload
     let imageUrl = req.body.image_url || '';
     if (req.file) {
       imageUrl = getFileUrl(req.file.filename, 'products');
@@ -55,15 +49,13 @@ router.post('/', upload.single('image'), async (req, res) => {
     };
 
     const product = Product.create(productData);
-    res.status(201).json({
-      success: true,
-      data: product
-    });
+
+    // Emit socket event
+    io.emit('product:created', product);
+
+    res.status(201).json({ success: true, data: product });
   } catch (error) {
-    // Delete uploaded file if product creation failed
-    if (req.file) {
-      deleteFile(`products/${req.file.filename}`);
-    }
+    if (req.file) deleteFile(`products/${req.file.filename}`);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -77,31 +69,24 @@ router.put('/:id', upload.single('image'), async (req, res) => {
     }
 
     const updates = { ...req.body };
-    
-    // Handle image upload
+
     if (req.file) {
-      // Delete old image if it exists and is in uploads folder
-      if (existingProduct.image_url) {
-        deleteFile(existingProduct.image_url);
-      }
+      if (existingProduct.image_url) deleteFile(existingProduct.image_url);
       updates.image_url = getFileUrl(req.file.filename, 'products');
     }
-    
-    // Auto out-of-stock logic
+
     if (updates.stock_quantity !== undefined && updates.stock_quantity === 0) {
       updates.is_available = false;
     }
 
     const product = Product.findByIdAndUpdate(req.params.id, updates);
-    res.json({
-      success: true,
-      data: product
-    });
+
+    // Emit socket event
+    io.emit('product:updated', product);
+
+    res.json({ success: true, data: product });
   } catch (error) {
-    // Delete uploaded file if update failed
-    if (req.file) {
-      deleteFile(`products/${req.file.filename}`);
-    }
+    if (req.file) deleteFile(`products/${req.file.filename}`);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -110,22 +95,19 @@ router.put('/:id', upload.single('image'), async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const product = Product.findById(req.params.id);
-    if (product) {
-      // Delete associated image file
-      if (product.image_url) {
-        deleteFile(product.image_url);
-      }
+    if (product && product.image_url) {
+      deleteFile(product.image_url);
     }
-    
+
     Product.findByIdAndDelete(req.params.id);
-    res.json({
-      success: true,
-      message: 'Product deleted successfully'
-    });
+
+    // Emit socket event
+    io.emit('product:deleted', { id: req.params.id });
+
+    res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
 export default router;
-
